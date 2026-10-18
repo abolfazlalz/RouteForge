@@ -4,6 +4,14 @@ Add a section for each release before creating its Git tag. The heading must mat
 For example, tag `v1.2.3` requires `## [v1.2.3] - YYYY-MM-DD` or `## v1.2.3`.
 The release workflow publishes the content below that heading up to the next `## ` heading.
 
+## [v0.1.1] - 2026-10-18
+
+### Fixed
+
+- Route `/ticketing/api` to the ticketing API upstream and rewrite the forwarded path to `/api`, preserving suffix paths.
+- Prevent `segment_prefix` routes from falling through on the exact base path.
+- Reject unsafe path rewrite targets.
+
 ## [v0.1.0] - 2026-10-18
 
 ### Added
