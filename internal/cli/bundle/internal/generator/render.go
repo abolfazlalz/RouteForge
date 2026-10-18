@@ -88,6 +88,26 @@ func Render(c *config.Config) ([]byte, error) {
 			}
 			q.Headers = headers(r.ProxyHeaders)
 			q.Response = headers(r.ResponseHeaders)
+			// A segment-prefix location ending in "/" does not match the base
+			// path itself. Proxy the exact base path too unless it is explicitly
+			// redirected; otherwise it falls through to a broader route.
+			if r.Match == "segment_prefix" && !r.RedirectSlash {
+				exact := q
+				exact.Modifier = "= "
+				exact.Suffix = ""
+				if r.Rewrite != "" {
+					// Nginx replaces the matched location prefix with the URI in
+					// proxy_pass. Use a slash-terminated URI for descendants, but
+					// keep the exact base-path mapping slash-free.
+					target := strings.TrimSuffix(r.Rewrite, "/")
+					if target == "" {
+						target = "/"
+					}
+					exact.PassURI = target
+					q.PassURI = strings.TrimSuffix(target, "/") + "/"
+				}
+				v.Routes = append(v.Routes, exact)
+			}
 			v.Routes = append(v.Routes, q)
 		}
 		m.Servers = append(m.Servers, v)

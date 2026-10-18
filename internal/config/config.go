@@ -161,6 +161,9 @@ func (c *Config) Validate() error {
 			if r.Path == "" || r.Path[0] != '/' || strings.ContainsAny(r.Path, "{};\n") {
 				return fmt.Errorf("invalid route path %q", r.Path)
 			}
+			if r.Rewrite != "" && (r.Rewrite[0] != '/' || strings.ContainsAny(r.Rewrite, "?#$;{}\\\r\n\t \"'")) {
+				return fmt.Errorf("invalid rewrite target %q: use a literal absolute path", r.Rewrite)
+			}
 			if _, ok := c.Upstreams[r.Upstream]; !ok {
 				return fmt.Errorf("route %s references undefined upstream %q", r.Path, r.Upstream)
 			}

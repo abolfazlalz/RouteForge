@@ -128,7 +128,7 @@ servers:
 
 Strict YAML decoding rejects unknown fields and duplicate mapping keys. Validation rejects unsupported schema versions, missing upstreams, invalid ports and timeout values, unsupported match modes, malformed route paths, and unsafe header values. Arbitrary Nginx directives are not accepted.
 
-`segment_prefix` creates a segment-aware Nginx location, so `/ticketing/api` stays on the ticketing upstream rather than matching a separate `/api` route. Keep a trailing slash redirect enabled when the application expects its mounted path to end with `/`. Query strings, including Socket.IO polling parameters, are retained by Nginx by default.
+`segment_prefix` routes both the base path and its descendants, so `/ticketing` and `/ticketing/api` stay on the ticketing upstream rather than matching a broader frontend or separate `/api` route. Set `rewrite` to a literal absolute path to replace the matched prefix upstream. For example, `path: /ticketing/api`, `match: segment_prefix`, and `rewrite: /api` map `/ticketing/api` to `/api` and `/ticketing/api/users` to `/api/users`. Leave `redirect_slash` disabled when the upstream has its own canonical slash behavior. Enabling it redirects `/ticketing` to `/ticketing/`; do not enable it if the upstream redirects that URL back to `/ticketing`, or the two redirects will loop. Query strings, including Socket.IO polling parameters, are retained by Nginx by default.
 
 ## Runtime and hot reload
 
