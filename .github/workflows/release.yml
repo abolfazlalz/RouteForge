@@ -1,0 +1,103 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.goos }}-${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            suffix: ''
+          - goos: linux
+            goarch: arm64
+            suffix: ''
+          - goos: darwin
+            goarch: amd64
+            suffix: ''
+          - goos: darwin
+            goarch: arm64
+            suffix: ''
+          - goos: windows
+            goarch: amd64
+            suffix: .exe
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Build standalone binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: '0'
+          VERSION: ${{ github.ref_name }}
+        run: |
+          mkdir -p dist
+          go build -trimpath -buildvcs=false \
+            -ldflags "-s -w -X github.com/routeforge/routeforge/internal/version.Value=${VERSION}" \
+            -o "dist/rforge-${GOOS}-${GOARCH}${{ matrix.suffix }}" ./cmd/rforge
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: rforge-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/rforge-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.suffix }}
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Download platform binaries
+        uses: actions/download-artifact@v8
+        with:
+          pattern: rforge-*
+          path: dist
+          merge-multiple: true
+
+      - name: Extract release notes from changelogs.md
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: go run ./cmd/releasenotes -tag "$VERSION" -file changelogs.md -out release-notes.md
+
+      - name: Create checksums
+        run: cd dist && sha256sum rforge-* > SHA256SUMS
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --title "$TAG" --notes-file release-notes.md
+          else
+            gh release create "$TAG" --verify-tag --title "$TAG" --notes-file release-notes.md
+          fi
+          gh release upload "$TAG" dist/* --clobber

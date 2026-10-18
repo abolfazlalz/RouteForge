@@ -1,0 +1,38 @@
+version: 1
+global:
+  worker_connections: 1024
+  proxy:
+    connect_timeout: 60s
+    read_timeout: 3600s
+    send_timeout: 3600s
+hot_reload:
+  enabled: true
+  debounce: 2s
+  poll_interval: 1s
+  rollback_on_failure: true
+upstreams:
+  frontend:
+    address: host.docker.internal:3000
+  ticketing:
+    address: host.docker.internal:3001
+  eorg1:
+    address: host.docker.internal:9000
+  eorg2:
+    address: host.docker.internal:9001
+servers:
+  - name: eorgdev.localhost
+    listen: 80
+    routes:
+      - {path: /api, upstream: eorg1, match: segment_prefix}
+      - {path: /storage, upstream: eorg1, match: segment_prefix}
+      - {path: /socket.io, upstream: eorg1, match: segment_prefix, websocket: true}
+      - {path: /ticketing, upstream: ticketing, match: segment_prefix, redirect_slash: true, preserve_path: true, websocket: true}
+      - {path: /, upstream: frontend, match: prefix, websocket: true}
+  - name: eorgdev2.localhost
+    listen: 80
+    routes:
+      - {path: /api, upstream: eorg2, match: segment_prefix}
+      - {path: /storage, upstream: eorg2, match: segment_prefix}
+      - {path: /socket.io, upstream: eorg2, match: segment_prefix, websocket: true}
+      - {path: /ticketing, upstream: ticketing, match: segment_prefix, redirect_slash: true, preserve_path: true, websocket: true}
+      - {path: /, upstream: frontend, match: prefix, websocket: true}

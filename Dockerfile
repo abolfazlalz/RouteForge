@@ -1,5 +1,11 @@
-FROM docker.espandarco.com/library/nginx:1.27-alpine
-
-RUN apk add --no-cache python3 py3-yaml py3-jinja2 && mkdir -p /var/lib/nginx-yaml-generator
-COPY render.py hot_reload.py nginx.conf.j2 /app/
-ENTRYPOINT ["python3", "/app/hot_reload.py"]
+FROM golang:1.26-alpine AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -o /out/rforge ./cmd/rforge
+FROM nginx:1.27-alpine
+COPY --from=build /out/rforge /usr/local/bin/rforge
+COPY docker-entrypoint.sh /usr/local/bin/routeforge-entrypoint
+RUN chmod 755 /usr/local/bin/routeforge-entrypoint
+ENTRYPOINT ["/usr/local/bin/routeforge-entrypoint"]
