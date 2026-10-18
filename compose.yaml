@@ -1,0 +1,11 @@
+services:
+  proxy:
+    build: .
+    ports:
+      - "80:80"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      # Directory mount makes editor rename-based atomic saves visible to the watcher.
+      - ./:/config:ro
+    restart: unless-stopped

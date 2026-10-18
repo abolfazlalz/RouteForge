@@ -1,0 +1,31 @@
+events { worker_connections 1024; }
+http {
+    map $http_upgrade $connection_upgrade {
+        default upgrade;
+        '' close;
+    }
+{% for server in servers %}
+    server {
+        listen 80;
+        server_name {{ server.name }};
+{% for route in server.routes %}
+{% if route.redirect_slash | default(false) %}
+        location = {{ route.path }} { return 301 {{ route.path }}/; }
+{% endif %}
+        location {% if route.prefix | default(false) %}^~ {% endif %}{{ route.path }}{% if route.prefix | default(false) %}/{% endif %} {
+            proxy_pass http://{{ route.target }};
+            proxy_http_version 1.1;
+            proxy_set_header Host $http_host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+{% if route.websocket | default(false) %}
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection $connection_upgrade;
+            proxy_read_timeout 3600s;
+{% endif %}
+        }
+{% endfor %}
+    }
+{% endfor %}
+}

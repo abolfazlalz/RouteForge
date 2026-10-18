@@ -1,0 +1,25 @@
+upstreams:
+  frontend: host.docker.internal:3000
+  ticketing: host.docker.internal:3001
+  eorg1: host.docker.internal:9000
+  eorg2: host.docker.internal:9001
+hot_reload:
+  enabled: true
+  debounce: 2s
+  poll_interval: 1s
+  rollback_on_failure: true
+servers:
+  - name: eorgdev.localhost
+    routes:
+      - {path: /api, upstream: eorg1}
+      - {path: /storage, upstream: eorg1}
+      - {path: /socket.io, upstream: eorg1, websocket: true}
+      - {path: /ticketing, upstream: ticketing, prefix: true, redirect_slash: true, websocket: true}
+      - {path: /, upstream: frontend, websocket: true}
+  - name: eorgdev2.localhost
+    routes:
+      - {path: /api, upstream: eorg2}
+      - {path: /storage, upstream: eorg2}
+      - {path: /socket.io, upstream: eorg2, websocket: true}
+      - {path: /ticketing, upstream: ticketing, prefix: true, redirect_slash: true, websocket: true}
+      - {path: /, upstream: frontend, websocket: true}
