@@ -66,8 +66,11 @@ func (m *Manager) Apply() error {
 	}
 	if m.Reload {
 		if out, x := exec.Command("nginx", "-s", "reload").CombinedOutput(); x != nil {
-			_ = os.WriteFile(m.Active+".rollback", old, 0644)
-			_ = os.Rename(m.Active+".rollback", m.Active)
+			rollback := c.HotReload.RollbackOnFailure == nil || *c.HotReload.RollbackOnFailure
+			if rollback {
+				_ = os.WriteFile(m.Active+".rollback", old, 0644)
+				_ = os.Rename(m.Active+".rollback", m.Active)
+			}
 			return fmt.Errorf("nginx reload: %s: %w", out, x)
 		}
 	}
@@ -87,7 +90,19 @@ func (m *Manager) Watch(done <-chan struct{}) error {
 	if e = w.Add(filepath.Dir(m.ConfigPath)); e != nil {
 		return e
 	}
-	tick := time.NewTicker(time.Second)
+	initial, err := config.Load(m.ConfigPath)
+	if err != nil {
+		return err
+	}
+	poll := parseDuration(initial.HotReload.PollInterval, time.Second)
+	debounce := parseDuration(initial.HotReload.Debounce, 2*time.Second)
+	if poll <= 0 {
+		poll = time.Second
+	}
+	if debounce < 0 {
+		debounce = 0
+	}
+	tick := time.NewTicker(poll)
 	defer tick.Stop()
 	pending := time.Time{}
 	for {
@@ -110,14 +125,39 @@ func (m *Manager) Watch(done <-chan struct{}) error {
 					pending = time.Now()
 				}
 			}
-			if !pending.IsZero() && time.Since(pending) >= 2*time.Second {
+			if !pending.IsZero() && time.Since(pending) >= debounce {
 				pending = time.Time{}
+				if latest, readErr := os.ReadFile(m.ConfigPath); readErr == nil && sha256.Sum256(latest) == m.last {
+					continue
+				}
 				if err = m.Apply(); err != nil && m.Logger != nil {
 					m.Logger.Error("configuration rejected", "error", err)
+				} else if err == nil {
+					if c, loadErr := config.Load(m.ConfigPath); loadErr == nil {
+						poll = parseDuration(c.HotReload.PollInterval, time.Second)
+						debounce = parseDuration(c.HotReload.Debounce, 2*time.Second)
+						if poll <= 0 {
+							poll = time.Second
+						}
+						if debounce < 0 {
+							debounce = 0
+						}
+						tick.Reset(poll)
+					}
 				}
 			}
 		}
 	}
+}
+func parseDuration(value string, fallback time.Duration) time.Duration {
+	if value == "" {
+		return fallback
+	}
+	d, err := time.ParseDuration(value)
+	if err != nil {
+		return fallback
+	}
+	return d
 }
 func Run() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
@@ -135,7 +175,9 @@ func Run() {
 	// watcher applies can now signal the live master process.
 	m.Reload = true
 	done := make(chan struct{})
-	go m.Watch(done)
+	if c, loadErr := config.Load(m.ConfigPath); loadErr == nil && (c.HotReload.Enabled == nil || *c.HotReload.Enabled) {
+		go m.Watch(done)
+	}
 	e := cmd.Wait()
 	close(done)
 	if e != nil {

@@ -49,7 +49,10 @@ func Render(c *config.Config) ([]byte, error) {
 	for _, s := range c.Servers {
 		v := srv{Name: s.Name, Listen: s.Listen, TLS: s.TLS}
 		if v.Listen == 0 {
-			v.Listen = 80
+			v.Listen = c.Global.DefaultPort
+			if v.Listen == 0 {
+				v.Listen = 80
+			}
 		}
 		routes := append([]config.Route(nil), s.Routes...)
 		rank := func(r config.Route) int {

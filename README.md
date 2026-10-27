@@ -4,9 +4,9 @@ RouteForge is a Go-based, YAML-driven manager for Nginx reverse proxies. The `rf
 
 ## Requirements
 
-- Docker Engine with Docker Compose v2
 - Go 1.26+ to build or install the CLI from source
-- Network access to pull the Go and Nginx base images the first time a runtime image is built
+- Docker Engine with Docker Compose v2 only for the Nginx deployment
+- Network access to pull the Go and Nginx base images when building the Nginx runtime image
 
 ## Quick start
 
@@ -66,12 +66,15 @@ go build -o rforge ./cmd/rforge
 
 ## Configuration schema
 
+Configuration references: [English](docs/configuration.md) · [فارسی](docs/configuration.fa.md).
+
 RouteForge currently supports schema version `1`. The following example configures two virtual hosts and named upstreams:
 
 ```yaml
 version: 1
 
 global:
+  default_port: 8080
   worker_connections: 1024
   proxy:
     connect_timeout: 60s
@@ -94,7 +97,7 @@ upstreams:
 
 servers:
   - name: app.localhost
-    listen: 80
+    # Omit listen to use global.default_port; explicit ports override it.
     routes:
       - path: /api
         upstream: api
@@ -116,9 +119,9 @@ servers:
 
 ### Supported settings
 
-- `global.worker_connections` and global proxy connect/read/send timeouts
+- `global.default_port` for servers that omit `listen` (defaults to 80), `global.worker_connections`, and global proxy connect/read/send timeouts
 - Named upstreams, each with an `address`
-- Multiple servers, with `name`, optional `listen` port, optional TLS certificate/key paths, and routes
+- Multiple servers, with `name`, optional `listen` port (defaults to `global.default_port`, itself defaulting to 80), optional TLS certificate/key paths, and routes
 - Route match modes: `exact`, `prefix`, `segment_prefix`, and regular expression `regex`
 - Per-route upstream, path preservation (enabled by default), optional rewrite and trailing slash redirect
 - WebSocket upgrade headers and per-route proxy timeout overrides
@@ -126,7 +129,7 @@ servers:
 - `${NAME}` and `$NAME` environment variable substitutions; referenced variables must be set
 - Hot reload settings in the YAML schema
 
-Strict YAML decoding rejects unknown fields and duplicate mapping keys. Validation rejects unsupported schema versions, missing upstreams, invalid ports and timeout values, unsupported match modes, malformed route paths, and unsafe header values. Arbitrary Nginx directives are not accepted.
+Schema version 1 uses strict YAML decoding and rejects unknown fields and duplicate mapping keys. The original unversioned layout is also accepted: scalar upstream addresses and route `prefix: true` settings are converted to schema version 1 (`prefix: true` maps to segment-prefix matching). Validation rejects unsupported schema versions, missing upstreams, invalid ports and timeout values, unsupported match modes, malformed route paths, and unsafe header values. Arbitrary Nginx directives are not accepted.
 
 `segment_prefix` routes both the base path and its descendants, so `/ticketing` and `/ticketing/api` stay on the ticketing upstream rather than matching a broader frontend or separate `/api` route. Set `rewrite` to a literal absolute path to replace the matched prefix upstream. For example, `path: /ticketing/api`, `match: segment_prefix`, and `rewrite: /api` map `/ticketing/api` to `/api` and `/ticketing/api/users` to `/api/users`. Leave `redirect_slash` disabled when the upstream has its own canonical slash behavior. Enabling it redirects `/ticketing` to `/ticketing/`; do not enable it if the upstream redirects that URL back to `/ticketing`, or the two redirects will loop. Query strings, including Socket.IO polling parameters, are retained by Nginx by default.
 
@@ -232,3 +235,24 @@ The `.gitlab-ci.yml` pipeline remains available for GitLab users. It runs `go ve
 ## Contributing
 
 Format Go changes with `gofmt`, run `go test ./...` and `go vet ./...`, and add focused tests for behavior changes. Keep generated Nginx output deterministic and document user-visible configuration changes.
+
+## Native mode (v0.2.0)
+
+The CLI can also run a standalone Go proxy without Docker or Nginx:
+
+```sh
+go build -o rforge ./cmd/rforge
+./rforge serve --engine native --config routeforge.yaml
+```
+
+`serve` stays in the foreground, handles Ctrl-C/SIGTERM with graceful HTTP shutdown, and watches the selected file. The listener ports, host names, and HTTP/TLS mode are fixed at startup; changing them is rejected and requires a restart. Route and upstream changes are compiled first and atomically activated, so existing requests finish against the route they already selected. Set `hot_reload.debounce` and `hot_reload.poll_interval` to configure the change debounce and fallback polling interval. A failed parse, validation, regex compilation, or certificate load keeps the previous configuration active.
+
+Native TLS uses each server's existing `tls.certificate` and `tls.key` values. SNI selects the configured virtual host certificate. Certificates can be replaced at the configured paths and reloaded, while listener identity stays fixed. The engine uses TLS 1.2 or newer. No automatic certificate provisioning is provided.
+
+The built-in `/healthz` endpoint returns `200 ok` for configured virtual hosts. Set `global.health_path` to change that path; RouteForge rejects values that are not absolute paths or that contain query/fragment syntax. Native mode supports HTTP reverse proxying, HTTP/1.1 WebSocket upgrades, fixed configured upstream targets, header overrides, and existing route matching/rewrite rules. It streams responses. Connect and response-header timeouts are applied; Go's standard transport does not offer Nginx's idle-between-every-read proxy timeout semantics or proxy send timeout, so those timeout fields are not behaviorally identical in native mode. Route regexes follow the Nginx renderer's case-insensitive behavior. Request bodies have no schema-configurable size limit; HTTP headers are capped at 1 MiB.
+
+`up`, `down`, `restart`, `status`, `logs`, and `reload` continue to manage the Docker Compose Nginx deployment. `serve --engine nginx` is intentionally rejected: manage that engine with the existing Compose commands. `generate` continues to render Nginx configuration. Native mode does not require Docker/Nginx, but the current `init` command still creates the backward-compatible Compose project alongside its YAML file.
+
+### Migration from Nginx
+
+Use the same version 1 YAML file and first run `rforge validate`, then `rforge serve --engine native`. Existing `name`, `listen`, TLS, upstream, route, timeout, and custom-header settings are read directly. Keep the listener set unchanged during a native process; restart after changing a port, virtual host, or TLS enablement. Check applications that depend on Nginx-only timeout details or extra Nginx features before switching production traffic. You can return to the existing Nginx deployment at any time with `rforge up`.

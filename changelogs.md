@@ -25,3 +25,20 @@ The release workflow publishes the content below that heading up to the next `##
 ## [Unreleased]
 
 - Add upcoming changes here, then move them under the matching version heading before tagging.
+
+## [v0.2.0] - 2026-10-27
+
+### Added
+
+- Added a pluggable engine contract and standalone native Go HTTP reverse proxy.
+- Added native virtual hosts, deterministic route precedence, rewrites, header overrides, WebSocket upgrade support, TLS/SNI, structured request logs, and `/healthz`.
+- Added atomic route snapshot reloads with fsnotify plus configured polling/debounce, retaining the active configuration when candidates fail.
+- Added `rforge serve --engine native`; existing Compose commands continue to manage Nginx.
+- Added `global.default_port` for servers that omit their per-server `listen` setting.
+- Restored parsing support for the original unversioned YAML layout, including scalar upstreams and `prefix: true` routes.
+- Added native router and forwarding tests and native-mode documentation.
+
+### Limitations
+
+- Listener identity changes require restarting `serve`.
+- Native response-header/connect timeout behavior does not reproduce Nginx idle-read/send timeout behavior.

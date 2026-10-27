@@ -20,8 +20,10 @@ type Config struct {
 	Servers   []Server            `yaml:"servers"`
 }
 type Global struct {
+	DefaultPort       int          `yaml:"default_port"`
 	WorkerConnections int          `yaml:"worker_connections"`
 	Proxy             ProxyOptions `yaml:"proxy"`
+	HealthPath        string       `yaml:"health_path"`
 }
 type ProxyOptions struct {
 	ConnectTimeout string `yaml:"connect_timeout"`
@@ -100,17 +102,108 @@ func Parse(b []byte) (*Config, error) {
 	if resolveErr != nil {
 		return nil, resolveErr
 	}
+	if !hasSchemaVersion(&node) {
+		return parseLegacy(b)
+	}
 	var c Config
 	d := yaml.NewDecoder(bytes.NewReader(b))
 	d.KnownFields(true)
 	if err := d.Decode(&c); err != nil {
 		return nil, fmt.Errorf("decode config: %w", err)
 	}
+	if c.Global.DefaultPort == 0 {
+		c.Global.DefaultPort = 80
+	}
+	for i := range c.Servers {
+		if c.Servers[i].Listen == 0 {
+			c.Servers[i].Listen = c.Global.DefaultPort
+		}
+	}
 	if err := c.Validate(); err != nil {
 		return nil, err
 	}
 	return &c, nil
 }
+
+// hasSchemaVersion reports whether the YAML root declares the versioned schema.
+func hasSchemaVersion(n *yaml.Node) bool {
+	if n.Kind == yaml.DocumentNode && len(n.Content) > 0 {
+		n = n.Content[0]
+	}
+	if n.Kind != yaml.MappingNode {
+		return false
+	}
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		if n.Content[i].Value == "version" {
+			return true
+		}
+	}
+	return false
+}
+
+type legacyConfig struct {
+	Global    Global            `yaml:"global"`
+	HotReload HotReload         `yaml:"hot_reload"`
+	Upstreams map[string]string `yaml:"upstreams"`
+	Servers   []legacyServer    `yaml:"servers"`
+}
+type legacyServer struct {
+	Name   string        `yaml:"name"`
+	Listen int           `yaml:"listen"`
+	TLS    *TLS          `yaml:"tls"`
+	Routes []legacyRoute `yaml:"routes"`
+}
+type legacyRoute struct {
+	Path            string            `yaml:"path"`
+	Upstream        string            `yaml:"upstream"`
+	Prefix          bool              `yaml:"prefix"`
+	Match           string            `yaml:"match"`
+	Websocket       bool              `yaml:"websocket"`
+	RedirectSlash   bool              `yaml:"redirect_slash"`
+	PreservePath    *bool             `yaml:"preserve_path"`
+	Rewrite         string            `yaml:"rewrite"`
+	ProxyHeaders    map[string]string `yaml:"proxy_headers"`
+	ResponseHeaders map[string]string `yaml:"response_headers"`
+	ConnectTimeout  string            `yaml:"connect_timeout"`
+	ReadTimeout     string            `yaml:"read_timeout"`
+	SendTimeout     string            `yaml:"send_timeout"`
+}
+
+// parseLegacy converts the original unversioned YAML layout into schema version 1.
+func parseLegacy(b []byte) (*Config, error) {
+	var legacy legacyConfig
+	d := yaml.NewDecoder(bytes.NewReader(b))
+	d.KnownFields(true)
+	if err := d.Decode(&legacy); err != nil {
+		return nil, fmt.Errorf("decode legacy config: %w", err)
+	}
+	c := &Config{Version: 1, Global: legacy.Global, HotReload: legacy.HotReload, Upstreams: make(map[string]Upstream, len(legacy.Upstreams))}
+	if c.Global.DefaultPort == 0 {
+		c.Global.DefaultPort = 80
+	}
+	for name, address := range legacy.Upstreams {
+		c.Upstreams[name] = Upstream{Address: address}
+	}
+	for _, server := range legacy.Servers {
+		s := Server{Name: server.Name, Listen: server.Listen, TLS: server.TLS}
+		if s.Listen == 0 {
+			s.Listen = c.Global.DefaultPort
+		}
+		for _, old := range server.Routes {
+			match := old.Match
+			if old.Prefix {
+				match = "segment_prefix"
+			}
+			s.Routes = append(s.Routes, Route{Path: old.Path, Upstream: old.Upstream, Match: match, Websocket: old.Websocket, RedirectSlash: old.RedirectSlash, PreservePath: old.PreservePath, Rewrite: old.Rewrite, ProxyHeaders: old.ProxyHeaders, ResponseHeaders: old.ResponseHeaders, ConnectTimeout: old.ConnectTimeout, ReadTimeout: old.ReadTimeout, SendTimeout: old.SendTimeout})
+		}
+		c.Servers = append(c.Servers, s)
+	}
+	if err := c.Validate(); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
 func duplicates(n *yaml.Node) error {
 	if n.Kind == yaml.MappingNode {
 		seen := map[string]bool{}
@@ -135,6 +228,12 @@ func duplicates(n *yaml.Node) error {
 
 // Validate rejects unsupported or unsafe routing configuration.
 func (c *Config) Validate() error {
+	if c.Global.HealthPath != "" && (c.Global.HealthPath[0] != '/' || strings.ContainsAny(c.Global.HealthPath, "?#\r\n\t ")) {
+		return fmt.Errorf("invalid health path %q", c.Global.HealthPath)
+	}
+	if c.Global.DefaultPort < 0 || c.Global.DefaultPort > 65535 {
+		return fmt.Errorf("invalid global default_port %d", c.Global.DefaultPort)
+	}
 	if c.Version != 1 {
 		return fmt.Errorf("unsupported configuration version %d", c.Version)
 	}
@@ -150,10 +249,14 @@ func (c *Config) Validate() error {
 		if s.Name == "" {
 			return fmt.Errorf("server name is required")
 		}
-		if s.Listen == 0 {
-			s.Listen = 80
+		listen := s.Listen
+		if listen == 0 {
+			listen = c.Global.DefaultPort
+			if listen == 0 {
+				listen = 80
+			}
 		}
-		if s.Listen < 1 || s.Listen > 65535 {
+		if listen < 1 || listen > 65535 {
 			return fmt.Errorf("invalid listen port for %s", s.Name)
 		}
 		seen := map[string]bool{}

@@ -1,12 +1,16 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/routeforge/routeforge/internal/config"
 	"github.com/routeforge/routeforge/internal/generator"
@@ -46,6 +50,18 @@ func New() *cobra.Command {
 		}
 		return e
 	}}, &cobra.Command{Use: "version", Run: func(*cobra.Command, []string) { fmt.Fprintln(os.Stdout, version.Value) }})
+	serve := &cobra.Command{Use: "serve", Short: "Run a RouteForge proxy engine", RunE: func(cmd *cobra.Command, args []string) error {
+		engineName, _ := cmd.Flags().GetString("engine")
+		if engineName != "native" {
+			return fmt.Errorf("serve supports --engine native; use up/restart to manage the Nginx Compose engine")
+		}
+		logger := slog.New(slog.NewJSONHandler(cmd.ErrOrStderr(), nil))
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		return runtime.ServeNative(ctx, configFile, logger)
+	}}
+	serve.Flags().String("engine", "native", "Proxy engine (native)")
+	root.AddCommand(serve)
 	root.AddCommand(initCommand())
 	root.AddCommand(&cobra.Command{Use: "apply", Hidden: true, RunE: func(*cobra.Command, []string) error {
 		path := os.Getenv("ROUTEFORGE_CONFIG")
@@ -172,6 +188,7 @@ func initCommand() *cobra.Command {
 
 const sample = `version: 1
 global:
+  default_port: 80
   worker_connections: 1024
 upstreams:
   app:
